@@ -10,24 +10,22 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
+import java.util.List;
+
 @SpringBootApplication
 public class UserServiceWithMailVerificationApplication {
 
 	@Bean
-	public CommandLineRunner runner(UserGradeRepository userGradeRepository, UserRepository userRepository) {
+	public CommandLineRunner runner(UserGradeRepository userGradeRepository) {
 		return args -> {
 
-			UserGrade grade = userGradeRepository.findById(9999).get();
+			var grades = List.of(
+					UserGrade.builder().code(9999).grade("ROOT").build(),
+					UserGrade.builder().code(9900).grade("ADMIN").build(),
+					UserGrade.builder().code(9931).grade("PILOT").build()
+			);
 
-			User rootAcc = User.builder()
-					.username("Root")
-					.password("admin")
-					.userEmail("aioceaneye@gmail.com")
-					.enabled(true)
-					.userGrade(grade)
-					.build();
-
-			userRepository.save(rootAcc);
+			userGradeRepository.saveAll(grades);
 		};
 	}
 

@@ -1,23 +1,27 @@
 package org.aioceaneye.userservicewithmailverification.service;
 
 import jakarta.mail.MessagingException;
-import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aioceaneye.userservicewithmailverification.dto.input.LoginForm;
 import org.aioceaneye.userservicewithmailverification.dto.input.RegisterUserForm;
+import org.aioceaneye.userservicewithmailverification.dto.input.VerifyUserDto;
 import org.aioceaneye.userservicewithmailverification.dto.output.LoginResponse;
 import org.aioceaneye.userservicewithmailverification.exception.AccountErrorException;
 import org.aioceaneye.userservicewithmailverification.exception.MailErrorException;
 import org.aioceaneye.userservicewithmailverification.exception.RegistrationErrorException;
 import org.aioceaneye.userservicewithmailverification.model.User;
-import org.aioceaneye.userservicewithmailverification.model.UserGrade;
 import org.aioceaneye.userservicewithmailverification.repository.UserGradeRepository;
 import org.aioceaneye.userservicewithmailverification.repository.UserRepository;
+import org.aioceaneye.userservicewithmailverification.util.MailMessagesUtil;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.Random;
+
+import static org.aioceaneye.userservicewithmailverification.model.Status.*;
 
 @Slf4j
 @Service
@@ -30,33 +34,54 @@ public class AuthenticationService {
     private final JwtService jwtService;
     private final UserGradeRepository userGradeRepository;
 
-    private Integer verificationCode;
 
     public String register(RegisterUserForm form) {
-        log.info("Verification code is {}", verificationCode);
-        log.info("Form code is {}", form.verificationCode());
+        var grade = userGradeRepository.findById(form.userGrade()).orElse(null);
 
-        if(verificationCode != form.verificationCode()){
-            throw new RegistrationErrorException("Verification code not match");
-        }
-        if(!form.password().equals(form.passwordCheck())){
-            throw new RegistrationErrorException("Password not match");
-        }
+        var verificationCode = generateVerificationCode();
+        var expirationTime = LocalDateTime.now().plusMinutes(15);
 
-        UserGrade userGrade = userGradeRepository.findById(form.userGrade())
-                .orElseThrow(() -> new EntityNotFoundException("UserGrade not found"));
-
-        User user = User.builder()
-                .userEmail(form.userEmail())
+        var registerUser = User.builder()
                 .username(form.username())
+                .userEmail(form.userEmail())
                 .password(passwordEncoder.encode(form.password()))
-                .userGrade(userGrade)
-                .enabled(true)
+                .verificationCode(verificationCode)
+                .verificationCodeExpiration(expirationTime)
+                .status(PENDING_VERIFICATION)
+                .enabled(false)
+                .userGrade(grade)
                 .build();
 
-        userRepository.save(user);
+        sendVerificationEmail(registerUser);
+        userRepository.save(registerUser);
+        return "Verification Email has been sent to " + form.userEmail();
+    }
 
-        return user.getUsername() + " created successfully";
+    public void verifyEmail(VerifyUserDto dto) {
+        var registerUser = userRepository.findByEmail(dto.email())
+                .orElseThrow(() -> new UsernameNotFoundException("Email not found"));
+
+        if(registerUser.getVerificationCodeExpiration().isBefore(LocalDateTime.now())) {
+            throw new RegistrationErrorException("Verification Code has expired");
+        }
+
+        if(registerUser.getVerificationCode().equals(dto.code())) {
+            registerUser.setStatus(VERIFIED_BUT_INACTIVE);
+            registerUser.setVerificationCode(null);
+            registerUser.setVerificationCodeExpiration(null);
+            userRepository.save(registerUser);
+        }
+    }
+
+    public String approveUser(String email) {
+        var verifiedUser = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        verifiedUser.setStatus(ACTIVE);
+        verifiedUser.setEnabled(true);
+        userRepository.save(verifiedUser);
+        sendAccountApprovalEmail(verifiedUser.getUserEmail());
+        return email + " has been approved.";
     }
 
     public LoginResponse login(LoginForm form) {
@@ -72,9 +97,21 @@ public class AuthenticationService {
         return  new LoginResponse(jwtService.generateAccessToken(user));
     }
 
-    public void sendVerificationEmail(String userEmail) {
+    public void sendAccountApprovalEmail(String email) {
+        var subject = "Account Approval";
+
+        var htmlMessage = MailMessagesUtil.getApproveMail();
+
+        try {
+            emailService.sendVerificationEmail(email, subject, htmlMessage);
+        } catch (MessagingException e) {
+            throw new MailErrorException(e.getMessage());
+        }
+    }
+
+    public void sendVerificationEmail(User user) {
         var subject = "Account Verification";
-        verificationCode = generateVerificationCode();
+        var verificationCode = user.getVerificationCode();
 
         String htmlMessage = "<html>"
                 + "<body style=\"font-family: Arial, sans-serif;\">"
@@ -90,15 +127,18 @@ public class AuthenticationService {
                 + "</html>";
 
         try {
-            emailService.sendVerificationEmail(userEmail, subject, htmlMessage);
+            emailService.sendVerificationEmail(user.getUserEmail(), subject, htmlMessage);
         } catch (MessagingException e) {
             throw new MailErrorException(e.getMessage());
         }
 
     }
 
-    private Integer generateVerificationCode() {
+    private String generateVerificationCode() {
         Random random = new Random();
-        return random.nextInt(90000) + 10000;
+        int code =  random.nextInt(900000) + 10000;
+        return String.valueOf(code);
     }
+
+
 }
