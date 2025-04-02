@@ -27,14 +27,14 @@ public class AuthenticationController {
         return ResponseEntity.ok(authenticationService.register(form));
     }
 
-    @PutMapping("/verify")
-    public ResponseEntity<String> verify(@RequestBody VerifyUserDto form) {
-        authenticationService.verifyEmail(form);
-        return ResponseEntity.ok("Verification Successful");
+    @GetMapping("/verify/{email}")
+    public ResponseEntity<String> getVerificationCode(@PathVariable String email) {
+        authenticationService.sendVerificationEmail(email);
+        return ResponseEntity.ok("Verification code has been sent to " + email);
     }
 
-    @PutMapping("/approve/{user-email}")
-    public ResponseEntity<String> approve(@PathVariable("user-email") String email) {
+    @PutMapping("/approve/{email}")
+    public ResponseEntity<String> approve(@PathVariable String email) {
         return ResponseEntity.ok(authenticationService.approveUser(email));
     }
 

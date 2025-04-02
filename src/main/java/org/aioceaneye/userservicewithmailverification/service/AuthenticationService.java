@@ -10,10 +10,14 @@ import org.aioceaneye.userservicewithmailverification.dto.output.LoginResponse;
 import org.aioceaneye.userservicewithmailverification.exception.AccountErrorException;
 import org.aioceaneye.userservicewithmailverification.exception.MailErrorException;
 import org.aioceaneye.userservicewithmailverification.exception.RegistrationErrorException;
+import org.aioceaneye.userservicewithmailverification.model.Register;
 import org.aioceaneye.userservicewithmailverification.model.User;
+import org.aioceaneye.userservicewithmailverification.repository.RegisterRepository;
 import org.aioceaneye.userservicewithmailverification.repository.UserGradeRepository;
 import org.aioceaneye.userservicewithmailverification.repository.UserRepository;
 import org.aioceaneye.userservicewithmailverification.util.MailMessagesUtil;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,43 +37,37 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final UserGradeRepository userGradeRepository;
+    private final RegisterRepository registerRepository;
 
 
     public String register(RegisterUserForm form) {
         var grade = userGradeRepository.findById(form.userGrade()).orElse(null);
 
-        var verificationCode = generateVerificationCode();
-        var expirationTime = LocalDateTime.now().plusMinutes(15);
+        verifyEmail(form.userEmail(), form.code());
 
         var registerUser = User.builder()
                 .username(form.username())
                 .userEmail(form.userEmail())
                 .password(passwordEncoder.encode(form.password()))
-                .verificationCode(verificationCode)
-                .verificationCodeExpiration(expirationTime)
-                .status(PENDING_VERIFICATION)
+                .status(VERIFIED_BUT_INACTIVE)
                 .enabled(false)
                 .userGrade(grade)
                 .build();
 
-        sendVerificationEmail(registerUser);
         userRepository.save(registerUser);
-        return "Verification Email has been sent to " + form.userEmail();
+        return "Register Successfully " + form.userEmail();
     }
 
-    public void verifyEmail(VerifyUserDto dto) {
-        var registerUser = userRepository.findByEmail(dto.email())
+    public void verifyEmail(String email, long verificationCode) {
+        var registerUser = registerRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("Email not found"));
 
-        if(registerUser.getVerificationCodeExpiration().isBefore(LocalDateTime.now())) {
+        if(registerUser.getExpiration().isBefore(LocalDateTime.now())) {
             throw new RegistrationErrorException("Verification Code has expired");
         }
 
-        if(registerUser.getVerificationCode().equals(dto.code())) {
-            registerUser.setStatus(VERIFIED_BUT_INACTIVE);
-            registerUser.setVerificationCode(null);
-            registerUser.setVerificationCodeExpiration(null);
-            userRepository.save(registerUser);
+        if(registerUser.getVerificationCode() != verificationCode) {
+            throw new RegistrationErrorException("Verification Code does not match");
         }
     }
 
@@ -79,9 +77,20 @@ public class AuthenticationService {
 
         verifiedUser.setStatus(ACTIVE);
         verifiedUser.setEnabled(true);
+        verifiedUser.setCreatedAt(LocalDateTime.now());
+        verifiedUser.setCreatedBy(getCurrentAdmin());
         userRepository.save(verifiedUser);
         sendAccountApprovalEmail(verifiedUser.getUserEmail());
         return email + " has been approved.";
+    }
+
+    private String getCurrentAdmin() {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if(authentication.isAuthenticated()) {
+            User admin = (User) authentication.getPrincipal();
+            return admin.getUserEmail();
+        }
+        return null;
     }
 
     public LoginResponse login(LoginForm form) {
@@ -109,9 +118,15 @@ public class AuthenticationService {
         }
     }
 
-    public void sendVerificationEmail(User user) {
+    public void sendVerificationEmail(String email) {
         var subject = "Account Verification";
-        var verificationCode = user.getVerificationCode();
+        var verificationCode = generateVerificationCode();
+
+        var registerUser = Register.builder()
+                .email(email)
+                .verificationCode(verificationCode)
+                .expiration(LocalDateTime.now().plusMinutes(15))
+                .build();
 
         String htmlMessage = "<html>"
                 + "<body style=\"font-family: Arial, sans-serif;\">"
@@ -127,17 +142,17 @@ public class AuthenticationService {
                 + "</html>";
 
         try {
-            emailService.sendVerificationEmail(user.getUserEmail(), subject, htmlMessage);
+            emailService.sendVerificationEmail(email, subject, htmlMessage);
+            registerRepository.save(registerUser);
         } catch (MessagingException e) {
             throw new MailErrorException(e.getMessage());
         }
 
     }
 
-    private String generateVerificationCode() {
+    private long generateVerificationCode() {
         Random random = new Random();
-        int code =  random.nextInt(900000) + 10000;
-        return String.valueOf(code);
+        return random.nextInt(900000) + 10000;
     }
 
 

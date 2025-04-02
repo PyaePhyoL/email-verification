@@ -2,6 +2,7 @@ package org.aioceaneye.userservicewithmailverification.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.aioceaneye.userservicewithmailverification.audit.UserAuditingListener;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedBy;
@@ -19,7 +20,6 @@ import java.util.Collection;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@EntityListeners(AuditingEntityListener.class)
 @Table(name = "users_t")
 public class User implements UserDetails {
 
@@ -29,29 +29,18 @@ public class User implements UserDetails {
     private String username;
     private String userEmail;
     private String password;
-    private String verificationCode;
-    private LocalDateTime verificationCodeExpiration;
 
     @Enumerated(EnumType.STRING)
     private Status status;
 
     private boolean enabled;
 
-    @OneToOne
+    @ManyToOne
     private UserGrade userGrade;
 
-    @CreatedDate
-    @Column(nullable = false, updatable = false)
-    private Timestamp createdAt;
-
-    @CreatedBy
-    @Column(updatable = false)
+    private LocalDateTime createdAt;
     private String createdBy;
-
-    @LastModifiedDate
-    private Timestamp modifiedAt;
-
-    @LastModifiedBy
+    private LocalDateTime modifiedAt;
     private String modifiedBy;
 
     @Override
